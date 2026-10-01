@@ -87,6 +87,7 @@ const Dashboard = () => {
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState("");
     const [isCreating, setIsCreating] = useState(false);
+    const [isDeleting, setIsDeleting] = useState(false);
     const [lifetimeTokens, setLifetimeTokens] = useState(0);
     const [chatProgress, setChatProgress] = useState<
         Record<string, { status: string; progress: number }>
@@ -263,6 +264,7 @@ const Dashboard = () => {
     const handleDeleteChat = async () => {
         if (!deleteTarget) return;
         const title = deleteTarget.title;
+        setIsDeleting(true);
         try {
             await deleteChat(deleteTarget.id);
             setChats((prev) => prev.filter((c) => c.id !== deleteTarget.id));
@@ -270,6 +272,8 @@ const Dashboard = () => {
             showToast(`"${title}" deleted successfully.`);
         } catch (err) {
             setError(err instanceof Error ? err.message : "Failed to delete chat.");
+        } finally {
+            setIsDeleting(false);
         }
     };
 
@@ -490,30 +494,38 @@ const Dashboard = () => {
                                             {(liveStatus === "processing" ||
                                                 liveStatus === "queued") && (
                                                 <div className="mb-4">
-                                                    <div className="flex items-center justify-between text-xs mb-2">
-                                                        <span className="text-gray-400 flex items-center gap-1.5">
-                                                            <Loader2 className="w-3 h-3 animate-spin text-yellow-400" />
-                                                            Ingesting pages...
-                                                        </span>
-                                                        <span className="text-yellow-400 font-medium font-mono">
-                                                            {Math.round(
-                                                                (progressPercent / 100) *
-                                                                    (chat.totalPages || 0),
-                                                            )}
-                                                            /{chat.totalPages || 0}
-                                                        </span>
-                                                    </div>
-                                                    <div className="w-full h-2 bg-white/5 rounded-full overflow-hidden border border-white/5">
-                                                        <div
-                                                            className="h-full bg-linear-to-r from-yellow-500 to-amber-400 rounded-full transition-all duration-500 ease-out"
-                                                            style={{
-                                                                width: `${progressPercent}%`,
-                                                            }}
-                                                        />
-                                                    </div>
-                                                    <p className="text-xs text-gray-500 mt-1.5 text-right">
-                                                        {progressPercent}% complete
-                                                    </p>
+                                                    {chat.isVectorLess ? (
+                                                        <div className="rounded-lg border border-white/10 bg-white/5 px-3 py-2.5 text-sm text-gray-400 flex items-center gap-2">
+                                                            Processing (vectorless)... feel free to return later.
+                                                        </div>
+                                                    ) : (
+                                                        <>
+                                                            <div className="flex items-center justify-between text-xs mb-2">
+                                                                <span className="text-gray-400 flex items-center gap-1.5">
+                                                                    <Loader2 className="w-3 h-3 animate-spin text-yellow-400" />
+                                                                    Ingesting pages...
+                                                                </span>
+                                                                <span className="text-yellow-400 font-medium font-mono">
+                                                                    {Math.round(
+                                                                        (progressPercent / 100) *
+                                                                            (chat.totalPages || 0),
+                                                                    )}
+                                                                    /{chat.totalPages || 0}
+                                                                </span>
+                                                            </div>
+                                                            <div className="w-full h-2 bg-white/5 rounded-full overflow-hidden border border-white/5">
+                                                                <div
+                                                                    className="h-full bg-linear-to-r from-yellow-500 to-amber-400 rounded-full transition-all duration-500 ease-out"
+                                                                    style={{
+                                                                        width: `${progressPercent}%`,
+                                                                    }}
+                                                                />
+                                                            </div>
+                                                            <p className="text-xs text-gray-500 mt-1.5 text-right">
+                                                                {progressPercent}% complete
+                                                            </p>
+                                                        </>
+                                                    )}
                                                 </div>
                                             )}
 
@@ -809,15 +821,24 @@ const Dashboard = () => {
                         <div className="flex gap-3">
                             <button
                                 onClick={() => setDeleteTarget(null)}
+                                disabled={isDeleting}
                                 className="flex-1 px-4 py-2 rounded-lg text-sm font-medium text-gray-400 hover:text-white bg-white/5 hover:bg-white/10 transition-colors"
                             >
                                 Cancel
                             </button>
                             <button
                                 onClick={handleDeleteChat}
-                                className="flex-1 px-4 py-2 rounded-lg text-sm font-medium text-white bg-red-500 hover:bg-red-600 transition-colors"
+                                disabled={isDeleting}
+                                className="flex-1 px-4 py-2 rounded-lg text-sm font-medium text-white bg-red-500 hover:bg-red-600 disabled:opacity-60 disabled:cursor-not-allowed transition-colors inline-flex items-center justify-center gap-2"
                             >
-                                Delete
+                                {isDeleting ? (
+                                    <>
+                                        <Loader2 className="w-4 h-4 animate-spin" />
+                                        Deleting...
+                                    </>
+                                ) : (
+                                    "Delete"
+                                )}
                             </button>
                         </div>
                     </div>

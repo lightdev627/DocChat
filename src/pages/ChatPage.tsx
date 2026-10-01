@@ -761,18 +761,30 @@ export const ChatPage = () => {
                                                         <h4 className="text-sm font-medium text-gray-200 truncate">
                                                             {source.title}
                                                         </h4>
-                                                        <a
-                                                            href={source.url}
-                                                            target="_blank"
-                                                            rel="noreferrer"
-                                                            className="text-sm text-gray-500 hover:text-accent-blue truncate block"
-                                                        >
-                                                            {new URL(source.url).pathname}
-                                                        </a>
+                                                        {source.url ? (
+                                                            <a
+                                                                href={source.url}
+                                                                target="_blank"
+                                                                rel="noreferrer"
+                                                                className="text-sm text-gray-500 hover:text-accent-blue truncate block"
+                                                            >
+                                                                {(() => {
+                                                                    try {
+                                                                        return new URL(source.url).pathname;
+                                                                    } catch {
+                                                                        return source.url;
+                                                                    }
+                                                                })()}
+                                                            </a>
+                                                        ) : (
+                                                            <span className="text-sm text-gray-500 truncate block">
+                                                                Source URL unavailable
+                                                            </span>
+                                                        )}
                                                     </div>
                                                 </div>
                                                 <div className="text-sm font-mono text-green-400/80 bg-green-500/10 px-1.5 py-0.5 rounded shrink-0">
-                                                    {source.relevance}%
+                                                    {source.relevance ?? "--"}%
                                                 </div>
                                             </div>
                                             <div className="p-3 text-sm text-gray-400 leading-relaxed max-h-40 overflow-y-auto custom-scrollbar relative">
@@ -792,15 +804,22 @@ export const ChatPage = () => {
                                                                 {line}
                                                             </p>
                                                         ))}
-                                                    <a
-                                                        href={source.url}
-                                                        target="_blank"
-                                                        rel="noreferrer"
-                                                        className="flex items-center gap-1.5 mt-3 text-accent-blue hover:underline font-mono text-sm opacity-80 decoration-accent-blue/50"
-                                                    >
-                                                        <LinkIcon className="w-3.5 h-3.5" />
-                                                        {source.url}
-                                                    </a>
+                                                    {source.url ? (
+                                                        <a
+                                                            href={source.url}
+                                                            target="_blank"
+                                                            rel="noreferrer"
+                                                            className="flex items-center gap-1.5 mt-3 text-accent-blue hover:underline font-mono text-sm opacity-80 decoration-accent-blue/50"
+                                                        >
+                                                            <LinkIcon className="w-3.5 h-3.5" />
+                                                            {source.url}
+                                                        </a>
+                                                    ) : (
+                                                        <span className="flex items-center gap-1.5 mt-3 text-gray-500 font-mono text-sm">
+                                                            <LinkIcon className="w-3.5 h-3.5" />
+                                                            No source URL for this chunk
+                                                        </span>
+                                                    )}
                                                 </div>
                                             </div>
                                         </div>
