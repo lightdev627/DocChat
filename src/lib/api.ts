@@ -6,12 +6,27 @@ import {
     removeMatchingFromCache,
 } from "./cache";
 
+// Provide a minimal typing for Vite's import.meta.env to avoid TS errors when
+// this project isn't using the Vite types globally.
+declare global {
+    interface ImportMetaEnv {
+        VITE_API_BASE_URL?: string;
+        // add other env vars here as needed
+    }
+}
+
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:3000/api/v1";
+
+type ApiError = {
+    field: string;
+    message: string;
+};
 
 type ApiEnvelope<T> = {
     statuscode?: number;
     message?: string;
     data?: T;
+    errors?: ApiError[];
 };
 
 export type Provider = "OPENAI" | "ANTHROPIC" | "GOOGLE" | "XAI" | "OPENROUTER";
@@ -83,11 +98,23 @@ const apiRequest = async <T>(path: string, init?: RequestInit): Promise<T> => {
 
     const payload = (await response.json().catch(() => ({}))) as ApiEnvelope<T>;
 
-    if (!response.ok) {
+   if (!response.ok) {
         if (response.status === 401 || response.status === 403) {
             forceSignOut();
         }
-        throw new Error(payload?.message || "Request failed");
+        // Build a human-readable summary from structured errors
+        // when the backend returns them (issue #31).
+        const errors = payload?.errors;
+        let errorMessage = payload?.message || "Request failed";
+        if (Array.isArray(errors) && errors.length > 0) {
+            const firstError = `${errors[0].field}: ${errors[0].message}`;
+            if (errors.length === 1) {
+                errorMessage = firstError;
+            } else {
+                errorMessage = `${firstError} and ${errors.length - 1} more`;
+            }
+        }
+        throw new Error(errorMessage);
     }
 
     return (payload.data ?? ({} as T)) as T;
