@@ -41,6 +41,7 @@ import {
     Database,
     Download,
     Link as LinkIcon,
+    Share2,
 } from "lucide-react";
 import clsx from "clsx";
 import hljs from "highlight.js";
@@ -55,6 +56,7 @@ import {
     getPagesIndexed,
     sendMessageStream,
     exportChatMessages,
+    toggleChatShare,
 } from "../lib/api";
 
 type CurrentLink = {
@@ -125,6 +127,28 @@ export const ChatPage = () => {
     const [currentLinks, setCurrentLinks] = useState<CurrentLink[]>([]);
     const [indexedPages, setIndexedPages] = useState<IndexedPage[]>([]);
 
+    const [isSharing, setIsSharing] = useState(false);
+    const [shareToken, setShareToken] = useState<string | null>(null);
+    const [shareModalOpen, setShareModalOpen] = useState(false);
+
+    const handleShare = () => {
+        setShareModalOpen(true);
+    };
+
+    const handleToggleShare = async () => {
+        setIsSharing(true);
+        try {
+            const res = await toggleChatShare(chatId);
+            setShareToken(res.shareToken || null);
+        } catch (err) {
+            setError(err instanceof Error ? err.message : "Failed to toggle share.");
+        } finally {
+            setIsSharing(false);
+        }
+    };
+
+    const [linkCopied, setLinkCopied] = useState(false);
+
     const handleExport = async () => {
         if (isExporting) return;
         setIsExporting(true);
@@ -163,6 +187,8 @@ export const ChatPage = () => {
                 tokensUsed: chat?.totalUsage?.total || 0,
                 lastUpdated: new Date(chat?.updatedAt || Date.now()).toLocaleString(),
             }));
+
+            setShareToken(chat?.shareToken || null);
 
             setCurrentLinks(
                 (chat?.chatSources || [])
@@ -594,6 +620,14 @@ export const ChatPage = () => {
                                 <span className="hidden sm:inline">{isExporting ? "Exporting..." : "Export"}</span>
                             </button>
                             <button
+                                onClick={handleShare}
+                                disabled={isSharing}
+                                className="px-3 py-1.5 rounded-lg text-sm font-medium transition-colors border border-white/10 bg-white/5 text-gray-400 hover:text-white hover:bg-white/10 flex items-center gap-2 disabled:opacity-50"
+                            >
+                                <Share2 className="w-4 h-4" />
+                                <span className="hidden sm:inline">{isSharing ? "Sharing..." : "Share"}</span>
+                            </button>
+                            <button
                                 onClick={() => setRightPanelOpen(!rightPanelOpen)}
                                 className={clsx(
                                     "px-3 py-1.5 rounded-lg text-sm font-medium transition-colors border flex items-center gap-2",
@@ -737,6 +771,89 @@ export const ChatPage = () => {
                         <ChevronLeft className="w-4 h-4 text-gray-400" />
                     )}
                 </button>
+
+                {/* Share Modal */}
+                <AnimatePresence>
+                    {shareModalOpen && (
+                        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+                            <motion.div
+                                initial={{ opacity: 0, scale: 0.95 }}
+                                animate={{ opacity: 1, scale: 1 }}
+                                exit={{ opacity: 0, scale: 0.95 }}
+                                className="bg-[#1a1a24] border border-white/10 rounded-2xl w-full max-w-md overflow-hidden shadow-2xl"
+                            >
+                                <div className="p-6">
+                                    <div className="flex items-center justify-between mb-4">
+                                        <h3 className="text-lg font-semibold text-white flex items-center gap-2">
+                                            <Share2 className="w-5 h-5 text-accent-blue" />
+                                            Share Chat
+                                        </h3>
+                                        <button
+                                            onClick={() => setShareModalOpen(false)}
+                                            className="text-gray-400 hover:text-white transition-colors"
+                                        >
+                                            <X className="w-5 h-5" />
+                                        </button>
+                                    </div>
+                                    <div className="space-y-4">
+                                        {shareToken ? (
+                                            <>
+                                                <p className="text-sm text-gray-400">
+                                                    Anyone with this link can view the chat history. They can also continue the chat by creating their own copy.
+                                                </p>
+                                                <div className="flex gap-2 items-center">
+                                                    <input
+                                                        type="text"
+                                                        readOnly
+                                                        value={`${window.location.origin}/shared/${shareToken}`}
+                                                        className="w-full bg-[#0b0b0f] border border-white/10 rounded-lg px-3 py-2 text-sm text-gray-200 font-mono focus:outline-none"
+                                                    />
+                                                    <button
+                                                        onClick={() => {
+                                                            navigator.clipboard.writeText(`${window.location.origin}/shared/${shareToken}`);
+                                                            setLinkCopied(true);
+                                                            setTimeout(() => setLinkCopied(false), 2000);
+                                                        }}
+                                                        className="p-2 rounded-lg bg-accent-blue/10 text-accent-blue hover:bg-accent-blue/20 transition-colors flex items-center gap-1"
+                                                    >
+                                                        {linkCopied ? (
+                                                            <>
+                                                                <Check className="w-4 h-4 text-green-400" />
+                                                                <span className="text-sm font-medium text-green-400">Copied</span>
+                                                            </>
+                                                        ) : (
+                                                            <Copy className="w-4 h-4" />
+                                                        )}
+                                                    </button>
+                                                </div>
+                                                <button
+                                                    onClick={handleToggleShare}
+                                                    disabled={isSharing}
+                                                    className="w-full py-2.5 rounded-lg border border-red-500/30 text-red-400 hover:bg-red-500/10 transition-colors text-sm font-medium disabled:opacity-50"
+                                                >
+                                                    {isSharing ? "Revoking..." : "Revoke Link"}
+                                                </button>
+                                            </>
+                                        ) : (
+                                            <>
+                                                <p className="text-sm text-gray-400">
+                                                    Generate a link to share this conversation with others.
+                                                </p>
+                                                <button
+                                                    onClick={handleToggleShare}
+                                                    disabled={isSharing}
+                                                    className="w-full py-2.5 rounded-lg bg-accent-blue text-white hover:bg-blue-600 transition-colors text-sm font-medium disabled:opacity-50"
+                                                >
+                                                    {isSharing ? "Creating..." : "Create Share Link"}
+                                                </button>
+                                            </>
+                                        )}
+                                    </div>
+                                </div>
+                            </motion.div>
+                        </div>
+                    )}
+                </AnimatePresence>
 
                 {/* 3. Right Panel (Sources) */}
                 <AnimatePresence initial={false}>
