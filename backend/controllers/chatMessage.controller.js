@@ -85,11 +85,12 @@ if (chat.status === "FAILED") {
             },
             orderBy: { createdAt: "asc" },
         });
-        apiKeyId = apiKey.id;
+        
 
         if (!apiKey) {
             throw new ApiError(400, "Invalid API key ID.");
         }
+        apiKeyId = apiKey.id;
         if (apiKey.userId !== req.user.id) {
             throw new ApiError(403, "You do not have access to this API key.");
         }
