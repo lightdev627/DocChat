@@ -689,12 +689,7 @@ export const ChatPage = () => {
                                 <span className="hidden sm:inline">{isExporting ? "Exporting..." : "Export"}</span>
                             </button>
                             <button
-                                onClick={() => {
-                                    if (isMobile) {
-                                        setLeftPanelOpen(false);
-                                    }
-                                    setRightPanelOpen(!rightPanelOpen);
-                                }}
+                                onClick={handleShare}
                                 aria-label="Toggle right panel"
                                 disabled={isSharing}
                                 className="px-3 py-1.5 rounded-lg text-sm font-medium transition-colors border border-white/10 bg-white/5 text-gray-400 hover:text-white hover:bg-white/10 flex items-center gap-2 disabled:opacity-50"
