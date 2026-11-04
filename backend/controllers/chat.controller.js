@@ -481,27 +481,46 @@ const cancelProcessing = asyncHandler(async (req, res) => {
 const deleteChat = asyncHandler(async (req, res) => {
     const { chatId } = req.params;
 
-    const chatMessages = await prisma.chatMessage.findMany({
-        where: { chatId },
-    });
-    for await (const message of chatMessages) {
-        await prisma.chatMessageSource.deleteMany({
-            where: { chatMessageId: message.id },
-        });
-    }
-    await prisma.chatMessage.deleteMany({
-        where: { chatId },
-    });
-    const chat = await prisma.chat.delete({
+    const chat = await prisma.chat.findUnique({
         where: { id: chatId },
+        select: {
+            id: true,
+            userId: true,
+        },
     });
 
     if (!chat) {
         throw new ApiError(404, "Chat not found");
     }
 
-    res.status(200).json(new ApiResponse(200, null, "Chat deleted successfully"));
+    if (chat.userId !== req.user.id) {
+        throw new ApiError(403, "You do not have permission to delete this chat");
+    }
+
+    await prisma.$transaction(async (tx) => {
+        await tx.chatMessageSource.deleteMany({
+            where: { chatMessage: { chatId } },
+        });
+
+        await tx.chatMessage.deleteMany({
+            where: { chatId },
+        });
+
+        await tx.chat.delete({
+            where: { id: chatId },
+        });
+
+        // ChatSource rows (and their DocumentTree / DocumentPage children) are
+        // intentionally left intact — they may be shared by other chats, and the
+        // Qdrant collection they reference is preserved so no data is lost.
+        // Orphaned collections are cleaned up by the admin Qdrant sweep.
+    });
+
+    res.status(200).json(
+        new ApiResponse(200, null, "Chat deleted successfully"),
+    );
 });
+
 
 const toggleShare = asyncHandler(async (req, res) => {
     const { chatId } = req.params;
