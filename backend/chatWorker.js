@@ -24,6 +24,35 @@ function sanitizeErrorMessage(message) {
     return safe.length > 200 ? `${safe.slice(0, 197)}...` : safe;
 }
 
+async function markChatFailed(chatId, error) {
+    const failureReason = sanitizeErrorMessage(error?.message) || "Ingestion failed";
+
+    await redis.setex(
+        getChatProgressKey(chatId),
+        3600,
+        JSON.stringify({
+            status: "FAILED",
+            progress: 0,
+            failureReason,
+        }),
+    );
+
+    await prisma.chat
+        .update({
+            where: { id: chatId },
+            data: {
+                status: "FAILED",
+                failedAt: new Date(),
+                failureReason,
+            },
+        })
+        .catch((dbError) => {
+            console.error("Failed to persist chat failure state:", dbError.message);
+        });
+
+    return failureReason;
+}
+
 function getErrorCode(err) {
     if (!err) return "UNKNOWN_ERROR";
     if (typeof err.code === "string" && err.code.trim()) return err.code.trim().slice(0, 64);
@@ -152,12 +181,12 @@ async function processVector(docsRootUrl, chatId, collectionName, chatSourceId) 
                 }
             } catch (err) {
                 console.error(`Failed link ${link}:`, err.message);
-                await redis.setex(getChatProgressKey(chatId), 3600, JSON.stringify({ status: "FAILED" }));
+                await markChatFailed(chatId, err);
                 continue;
             }
         }
     } catch (err) {
-        await redis.setex(getChatProgressKey(chatId), 3600, JSON.stringify({ status: "FAILED" }));
+        await markChatFailed(chatId, err);
         throw err;
     }
 }
@@ -245,7 +274,7 @@ async function processVectorLess(docsRootUrl, chatId, chatSourceId) {
         return;
     } catch (error) {
         console.error("Error VectorLess:", error);
-        await redis.setex(getChatProgressKey(chatId), 3600, JSON.stringify({ status: "FAILED" }));
+        await markChatFailed(chatId, error);
         throw error;
     }
 }
@@ -290,6 +319,7 @@ const worker = new Worker(
                 status: "SUCCESS",
             });
         } catch (err) {
+            await markChatFailed(chatId, err);
             await prisma.ingestionRun.update({
                 where: { id: run.id },
                 data: {
