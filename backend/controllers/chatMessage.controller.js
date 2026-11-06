@@ -390,33 +390,50 @@ const exportChatMessages = asyncHandler(async (req, res) => {
     res.end();
 });
 
-const getChatMessages = asyncHandler(async (req, res) => {
-    const { chatId } = req.params;
+const getChatMessageSources = asyncHandler(async (req, res) => {
+    const { messageId } = req.params;
 
-    const chat = await prisma.chat.findUnique({
-        where: { id: chatId },
+    // Fetch the message with its parent chat to check ownership
+    const message = await prisma.chatMessage.findUnique({
+        where: { id: messageId },
+        include: {
+            chat: {
+                select: { userId: true },
+            },
+        },
     });
 
-    if (!chat) {
-        throw new ApiError(404, "Chat not found.");
+    // Message does not exist
+    if (!message) {
+        throw new ApiError(404, "Message not found.");
     }
 
-    const messages = await prisma.chatMessage.findMany({
-        where: { chatId },
+    // Message exists but caller does not own the parent chat
+    // Return 404 (not 403) so we don't reveal the resource exists
+    if (message.chat.userId !== req.user.id) {
+        throw new ApiError(404, "Message not found.");
+    }
+
+    // Ownership verified — fetch sources
+    const messageSources = await prisma.chatMessageSource.findMany({
+        where: { chatMessageId: messageId },
         orderBy: { createdAt: "asc" },
     });
 
-    if (!messages.length) {
+    if (!messageSources.length) {
         return res
             .status(200)
-            .json(new ApiResponse(200, { messages: [] }, "No messages found for this chat."));
+            .json(
+                new ApiResponse(200, { messageSources: [] }, "No sources found for this chat message."),
+            );
     }
 
     return res
         .status(200)
-        .json(new ApiResponse(200, { messages: messages }, "Chat messages retrieved successfully."));
+        .json(
+            new ApiResponse(200, { messageSources }, "Chat message sources retrieved successfully."),
+        );
 });
-
 const getChatMessageSources = asyncHandler(async (req, res) => {
     const { messageId } = req.params;
 
