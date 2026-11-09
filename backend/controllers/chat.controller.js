@@ -200,6 +200,7 @@ const { internalLinks, title } = await scrapeWebpage(normalizedDocsUrl, normaliz
                 chatSourceId: chat.chatSources[0].id.toString(),
                 isVectorLess: isVectorLessChat,
                 scrapeLimit,
+                requestId: req.id,
             },
             { jobId: chat.id },
         );
