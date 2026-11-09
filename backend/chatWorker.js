@@ -12,6 +12,7 @@ import { RecursiveCharacterTextSplitter } from "@langchain/textsplitters";
 import { treeindex, qdrant } from "./utils/ragClients.js";
 import { v4 as uuidv4 } from "uuid";
 import prisma from "./utils/prismaClient.js";
+import { recordIngestionJobDuration } from "./utils/metrics.js";
 import { createAuditEvent } from "./utils/audit.js";
 
 function sanitizeErrorMessage(message) {
@@ -323,15 +324,15 @@ async function processVectorLess(docsRootUrl, chatId, chatSourceId, scrapeLimit)
                 console.error("Failed to update indexed pages:", err.message);
             });
         }
-
         await redis.setex(getChatProgressKey(chatId), 3600, JSON.stringify({ status: "READY", progress: 100 }));
         await updateChatProgress(chatId, { status: "READY", progress: 100 });
 
         await prisma.chatSource.update({
             where: { id: chatSourceId },
             data: { collectionName: docTree.id },
-        const actualPages = pages.length;
+        });
 
+        const actualPages = pages.length;
         await prisma.chat.update({
             where: { id: chatId },
             data: {
@@ -363,6 +364,7 @@ async function processVectorLess(docsRootUrl, chatId, chatSourceId, scrapeLimit)
 const worker = new Worker(
     "chatCreation",
     async (job) => {
+        const startTime = process.hrtime();
         const { chatId, docsUrl, collectionName, chatSourceId, isVectorLess, scrapeLimit } = job.data;
         const run = await prisma.ingestionRun.create({
             data: {
@@ -421,6 +423,12 @@ const worker = new Worker(
                 errorMessage: sanitizeErrorMessage(err?.message),
             });
             throw err;
+        } finally {
+            const diff = process.hrtime(startTime);
+            const durationInSeconds = diff[0] + diff[1] / 1e9;
+            await recordIngestionJobDuration(durationInSeconds).catch((err) => {
+                console.error("Failed to record job duration metric:", err.message);
+            });
         }
     },
     {
@@ -441,7 +449,9 @@ worker.on("completed", async (job) => {
 worker.on("failed", async (job, err) => {
     console.log(err);
     console.error(`Job ${job?.id} failed: ${err.message}`);
+    
     if (job?.data?.chatId) {
+        await updateChatProgress(job.data.chatId, { status: "FAILED" });
         prisma.chat
             .update({
                 where: { id: job.data.chatId },
