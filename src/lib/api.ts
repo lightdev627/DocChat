@@ -658,3 +658,6 @@ export const getSharedMessageSources = (shareToken: string, messageId: string) =
 
 export const forkSharedChat = (shareToken: string) =>
     apiRequest<{ chatId: string }>(`/chat/shared/${shareToken}/fork`, { method: "POST" });
+
+export const deleteMyData = () =>
+    apiRequest<{ message: string }>("/user/delete-my-data?confirm=true", { method: "DELETE" });
