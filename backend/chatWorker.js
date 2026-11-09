@@ -74,6 +74,44 @@ function getWorkerConfig() {
     };
 }
 
+function isChatSourceReady(chatSource) {
+    if (!chatSource) return false;
+    if (chatSource.isVectorLess) return Boolean(chatSource.documentTree);
+    return (chatSource._count?.pagesIndexed ?? 0) > 0;
+}
+
+async function refreshChatStatus(chatId) {
+    const chat = await prisma.chat.findUnique({
+        where: { id: chatId },
+        include: {
+            chatSources: {
+                include: {
+                    documentTree: true,
+                    _count: {
+                        select: { pagesIndexed: true },
+                    },
+                },
+            },
+        },
+    });
+
+    if (!chat) return;
+    const allReady = chat.chatSources.length > 0 && chat.chatSources.every(isChatSourceReady);
+    await prisma.chat.update({
+        where: { id: chatId },
+        data: { status: allReady ? "READY" : "QUEUED" },
+    });
+
+    await redis.setex(
+        chatId,
+        3600,
+        JSON.stringify({
+            status: allReady ? "READY" : "PROCESSING",
+            progress: allReady ? 100 : 0,
+        }),
+    );
+}
+
 async function processVector(docsRootUrl, chatId, collectionName, chatSourceId, scrapeLimit) {
     let pagesCrawled = 0;
     let pagesFailed = 0;
@@ -180,7 +218,12 @@ async function processVector(docsRootUrl, chatId, collectionName, chatSourceId, 
                 });
             }
         })));
-        
+
+        await prisma.chatSource.update({
+            where: { id: chatSourceId },
+            data: { collectionName },
+        });
+
         return { pagesCrawled, pagesFailed };
     } catch (err) {
         err.pagesCrawled = pagesCrawled;
@@ -285,6 +328,9 @@ async function processVectorLess(docsRootUrl, chatId, chatSourceId, scrapeLimit)
         await redis.setex(getChatProgressKey(chatId), 3600, JSON.stringify({ status: "READY", progress: 100 }));
         await updateChatProgress(chatId, { status: "READY", progress: 100 });
 
+        await prisma.chatSource.update({
+            where: { id: chatSourceId },
+            data: { collectionName: docTree.id },
         const actualPages = pages.length;
 
         await prisma.chat.update({
@@ -387,29 +433,21 @@ const worker = new Worker(
 
 worker.on("completed", async (job) => {
     console.log(`Job ${job.id} completed!`);
-    if (!job.data.isVectorLess) {
-        await redis.setex(
-            job.data.collectionName,
-            3600,
-            JSON.stringify({ status: "READY", progress: 100 }),
-        );
-        await updateChatProgress(job.data.chatId, { status: "READY", progress: 100 });
-    }
-
-    await prisma.chat
-        .update({
-            where: { id: job.data.chatId },
-            data: { status: "READY" },
-        })
-        .catch((err) => {
-            console.error("Update status Failed:", err.message);
-        });
+    await refreshChatStatus(job.data.chatId).catch((err) => {
+        console.error("Update status Failed:", err.message);
+    });
 });
 
 worker.on("failed", async (job, err) => {
     console.log(err);
     console.error(`Job ${job?.id} failed: ${err.message}`);
     if (job?.data?.chatId) {
-        await updateChatProgress(job.data.chatId, { status: "FAILED" });
+        prisma.chat
+            .update({
+                where: { id: job.data.chatId },
+                data: { status: "FAILED" },
+            })
+            .catch(() => {});
+        redis.setex(job.data.chatId, 3600, JSON.stringify({ status: "FAILED" })).catch(() => {});
     }
 });
