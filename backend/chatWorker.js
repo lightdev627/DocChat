@@ -86,6 +86,48 @@ function getWorkerConfig() {
     };
 }
 
+class ChatCancelledError extends Error {
+    constructor(message = "Chat ingestion cancelled") {
+        super(message);
+        this.name = "ChatCancelledError";
+    }
+}
+
+async function ensureChatActive(chatId) {
+    const chat = await prisma.chat.findUnique({
+        where: { id: chatId },
+        select: {
+            id: true,
+            status: true,
+            deletedAt: true,
+        },
+    });
+
+    if (!chat) {
+        throw new ChatCancelledError("Chat no longer exists");
+    }
+
+    if (chat.deletedAt) {
+        throw new ChatCancelledError("Chat was deleted");
+    }
+
+    if (!["QUEUED", "PROCESSING"].includes(chat.status)) {
+        throw new ChatCancelledError(`Chat status changed to ${chat.status}`);
+    }
+
+    return chat;
+}
+
+async function cleanupPartialIngestion(chatSourceId) {
+    await prisma.documentPage.deleteMany({
+        where: { chatSourceId },
+    });
+
+    await prisma.documentTree.deleteMany({
+        where: { chatSourceId },
+    });
+}
+
 function computeContentHash(body) {
     return crypto.createHash("sha256").update(body).digest("hex");
 }
@@ -119,9 +161,13 @@ async function removeOldQdrantPoints(collectionName, pageUrl) {
             },
             limit: 100,
         });
+
         if (scroll.points.length > 0) {
             const pointIds = scroll.points.map((p) => p.id);
-            await qdrant.delete(collectionName, { wait: true, points: pointIds });
+            await qdrant.delete(collectionName, {
+                wait: true,
+                points: pointIds,
+            });
         }
     } catch (err) {
         console.error(`Failed to remove old Qdrant points for ${pageUrl}:`, err.message);
@@ -132,6 +178,7 @@ async function getActivePages(chatSourceId) {
     const pages = await prisma.documentPage.findMany({
         where: { chatSourceId, isActive: true },
     });
+
     return new Map(pages.map((p) => [p.pageUrl, p]));
 }
 
@@ -143,11 +190,14 @@ async function markPagesRemoved(chatSourceId, currentUrls) {
             pageUrl: { notIn: currentUrls },
         },
     });
+
     if (stale.length === 0) return stale;
+
     await prisma.documentPage.updateMany({
         where: { id: { in: stale.map((p) => p.id) } },
         data: { isActive: false },
     });
+
     return stale;
 }
 
@@ -193,6 +243,7 @@ async function processVector(docsRootUrl, chatId, collectionName, chatSourceId, 
     let pagesCrawled = 0;
     let pagesFailed = 0;
     try {
+        await ensureChatActive(chatId);
         const { maxPagesPerJob } = getWorkerConfig();
         const rootUrl = normalizeUrl(docsRootUrl);
         console.log("Scraping root:", rootUrl);
@@ -236,6 +287,7 @@ async function processVector(docsRootUrl, chatId, collectionName, chatSourceId, 
         if (linksToProcess.length > 0) {
             await Promise.all(linksToProcess.map((link) => limiter.schedule(async () => {
                 try {
+                    await ensureChatActive(chatId);
                     const { body, title } = await scrapeWebpage(link, rootUrl);
                     const contentHash = computeContentHash(body);
 
@@ -266,6 +318,7 @@ async function processVector(docsRootUrl, chatId, collectionName, chatSourceId, 
                         let allEmbeddings = [];
                         const batchSize = 100;
                         for (let i = 0; i < chunks.length; i += batchSize) {
+                            await ensureChatActive(chatId);
                             const chunkBatch = chunks.slice(i, i + batchSize);
                             const embeddingsBatch = await generateVectorEmbeddings(chunkBatch);
                             const batchArray = Array.isArray(embeddingsBatch) ? embeddingsBatch : [embeddingsBatch];
@@ -365,7 +418,11 @@ async function processVector(docsRootUrl, chatId, collectionName, chatSourceId, 
     } catch (err) {
         err.pagesCrawled = pagesCrawled;
         err.pagesFailed = pagesFailed;
-        await markChatFailed(chatId, err);
+        if (err instanceof ChatCancelledError) {
+            await cleanupPartialIngestion(chatSourceId);
+        } else {
+            await markChatFailed(chatId, err);
+        }
         throw err;
     }
 }
@@ -374,6 +431,7 @@ async function processVectorLess(docsRootUrl, chatId, chatSourceId, scrapeLimit)
     let pagesCrawled = 0;
     let pagesFailed = 0;
     try {
+        await ensureChatActive(chatId);
         const { maxPagesPerJob, vectorlessBatchSize } = getWorkerConfig();
 
         const rootUrl = normalizeUrl(docsRootUrl);
@@ -390,6 +448,8 @@ async function processVectorLess(docsRootUrl, chatId, chatSourceId, scrapeLimit)
         const pages = [];
 
         for (let i = 0; i < totalLinks; i += vectorlessBatchSize) {
+            await ensureChatActive(chatId);
+
             const batchLinks = allLinks.slice(i, i + vectorlessBatchSize);
             if (batchLinks.length === 0) break;
             const results = await Promise.all(
@@ -519,8 +579,12 @@ async function processVectorLess(docsRootUrl, chatId, chatSourceId, scrapeLimit)
         error.pagesCrawled = pagesCrawled;
         error.pagesFailed = pagesFailed;
         console.error("Error VectorLess:", error);
-        await updateChatProgress(chatId, { status: "FAILED" });
-        await markChatFailed(chatId, error);
+        if (error instanceof ChatCancelledError) {
+            await cleanupPartialIngestion(chatSourceId);
+        } else {
+            await updateChatProgress(chatId, { status: "FAILED" });
+            await markChatFailed(chatId, error);
+        }
         throw error;
     }
 }
@@ -569,7 +633,9 @@ const worker = new Worker(
                 status: "SUCCESS",
             });
         } catch (err) {
-            await markChatFailed(chatId, err);
+            if (!(err instanceof ChatCancelledError)) {
+                await markChatFailed(chatId, err);
+            }
             await prisma.ingestionRun.update({
                 where: { id: run.id },
                 data: {
@@ -644,7 +710,7 @@ worker.on("completed", async (job) => {
 worker.on("failed", async (job, err) => {
     console.error(`Job ${job?.id} failed: ${err.message}`);
     
-    if (job?.data?.chatId) {
+    if (job?.data?.chatId && !(err instanceof ChatCancelledError)) {
         await markChatFailed(job.data.chatId, err);
     }
 });
