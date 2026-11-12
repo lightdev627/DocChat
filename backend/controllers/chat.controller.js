@@ -11,6 +11,8 @@ import redis, {
     redisSubscriber,
 } from "../utils/redis.js";
 import crypto from "crypto";
+import { ApiResponse } from "../utils/ApiResponse.js";
+import { ApiError } from "../utils/ApiError.js";
 import { createAuditEvent } from "../utils/audit.js";
 import { normalizeUrl } from "../utils/ragUtilities.js";
 import { getChatCreationQueue } from "../utils/queue.js";
@@ -1135,6 +1137,65 @@ const forkSharedChat = asyncHandler(async (req, res) => {
     );
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// chunkText — pure utility, isolated so the ingestion worker can reuse it
+// without any dependency on UI or HTTP layer code.
+// ─────────────────────────────────────────────────────────────────────────────
+function chunkText(text, chunkSize, overlap) {
+    if (!text || !text.trim() || chunkSize <= 0) return [];
+    const safeOverlap = Math.min(overlap, chunkSize - 1);
+    const chunks = [];
+    let start = 0;
+
+    while (start < text.length) {
+        chunks.push(text.slice(start, start + chunkSize));
+        start += chunkSize - safeOverlap;
+    }
+
+    return chunks;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /api/chunk-preview
+// Sandbox-only endpoint.
+// Does NOT write to DB, does NOT store vectors, does NOT create chat data.
+// ─────────────────────────────────────────────────────────────────────────────
+const chunkPreview = asyncHandler(async (req, res) => {
+    const { text, chunkSize = 200, overlap = 50 } = req.body;
+
+    if (!text || typeof text !== "string" || !text.trim()) {
+        throw new ApiError(400, "text is required and must be a non-empty string.");
+    }
+
+    if (text.length > 100_000) {
+        throw new ApiError(400, "Text exceeds the 100,000 character sandbox limit.");
+    }
+
+    const parsedSize    = parseInt(chunkSize, 10);
+    const parsedOverlap = parseInt(overlap, 10);
+
+    if (isNaN(parsedSize) || parsedSize < 10 || parsedSize > 5000) {
+        throw new ApiError(400, "chunkSize must be between 10 and 5000.");
+    }
+
+    if (isNaN(parsedOverlap) || parsedOverlap < 0) {
+        throw new ApiError(400, "overlap must be 0 or greater.");
+    }
+
+    const chunks = chunkText(text, parsedSize, parsedOverlap);
+
+    res.status(200).json(
+        new ApiResponse(
+            200,
+            {
+                chunks,
+                count:     chunks.length,
+                chunkSize: parsedSize,
+                overlap:   parsedOverlap,
+            },
+            "Chunk preview generated successfully",
+        ),
+    );
 const downloadRawSource = asyncHandler(async (req, res) => {
     const { chatId, sourceId } = req.params;
 
@@ -1213,5 +1274,6 @@ export {
     toggleShare,
     getSharedChatDetails,
     forkSharedChat,
+    chunkPreview,          // ← new
     downloadRawSource,
 };

@@ -31,6 +31,7 @@ import {
     getSharedChatDetails,
     forkSharedChat,
     qdrantCleanup,
+    chunkPreview,
     streamChatStatus,
     downloadRawSource,
 } from "../controllers/chat.controller.js";
@@ -53,6 +54,7 @@ chatRouter
 chatRouter.route("/ingestion-runs/failed").get(verifyStrictJWT, recentFailedIngestionRuns);
 chatRouter.route("/list").get(verifyStrictJWT, listAllChats);
 chatRouter.route("/recent").get(verifyStrictJWT, recentChats);
+chatRouter.route("/chunk-preview").post(verifyStrictJWT, chunkPreview);
 
 // Shared Chat Routes
 chatRouter.route("/shared/:shareToken").get(getSharedChatDetails);
