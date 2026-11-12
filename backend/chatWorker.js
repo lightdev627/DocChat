@@ -277,7 +277,8 @@ async function processVector(docsRootUrl, chatId, collectionName, chatSourceId, 
         console.log("Scraping root:", rootUrl);
 
         const { internalLinks } = await scrapeWebpage(rootUrl, rootUrl);
-        const effectiveLimit = typeof scrapeLimit === 'number' && scrapeLimit > 0 ? scrapeLimit : maxPagesPerJob;
+        // Combined logic: enforce effective limit, then filter valid docs
+        const effectiveLimit = Math.min(typeof scrapeLimit === 'number' && scrapeLimit > 0 ? scrapeLimit : maxPagesPerJob, maxPagesPerJob);
         const allLinks = internalLinks.slice(0, effectiveLimit).filter(link => isValidDocUrl(link, rootUrl));
         const totalLinks = allLinks.length;
 
